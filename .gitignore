@@ -1,0 +1,18 @@
+*
+!index.html
+
+# Frontend assets
+!css/
+!css/*.css
+!js/
+!js/*.js
+
+# Backend assets
+!py/
+!py/*.py
+
+# Config files
+!config.json
+
+# GitHub configs
+!.gitignore
