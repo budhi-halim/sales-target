@@ -2,10 +2,14 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import io
+import copy
 from datetime import datetime
 from pyscript import ffi, window, document
 import re
 from collections import defaultdict
+from openpyxl.chart import ScatterChart, LineChart, Reference, Series
+from openpyxl.chart.marker import Marker
+from openpyxl.chart.layout import Layout, ManualLayout
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 
@@ -442,7 +446,7 @@ def finalize_files(file_datas, grouping, proceed_multi_year):
 
     wb = Workbook()
 
-    # Sheet 1: Sales Data (identical to current)
+    # Sheet 1: Sales Data
     sheet1 = wb.active
     sheet1.title = 'Sales Data'
     sales_data_2d = []
@@ -490,6 +494,215 @@ def finalize_files(file_datas, grouping, proceed_multi_year):
         if g:
             groups_filtered.append(g)
     generate_sales_target_sheet(wb, groups_filtered, period_months, config)
+
+    # Sheet 4: Cumulative Percentage based on Sales Target
+    # Recompute the same column indexing logic used in generate_sales_target_sheet
+    n_months = len(period_months)
+    usd_start = 2
+    usd_end = usd_start + n_months - 1
+    usd_total_col = usd_end + 1
+    usd_target_col = usd_total_col + 1
+    usd_achieved_col = usd_target_col + 1
+
+    qty_start = usd_achieved_col + 1
+    qty_end = qty_start + n_months - 1
+    qty_total_col = qty_end + 1
+    qty_target_col = qty_total_col + 1
+    qty_achieved_col = qty_target_col + 1
+
+    # Create sheet for cumulative percentages
+    sheet4 = wb.create_sheet('Cumulative Percentage')
+
+    # Build headers: Area, then Sales - USD MMM YY (for each period), then Sales - Qty MMM YY (for each period)
+    headers_cp = ['Area']
+    for (y, m) in period_months:
+        label = datetime(int(y), int(m), 1).strftime('%b %y')
+        headers_cp.append(f'Sales - USD {label}')
+    for (y, m) in period_months:
+        label = datetime(int(y), int(m), 1).strftime('%b %y')
+        headers_cp.append(f'Sales - Qty {label}')
+
+    # Prepare empty data rows (formulas will be applied per row)
+    data_2d_cp = []
+    for group in groups_filtered:
+        # Table uses group label same as Sales Target (A = ', '.join(group))
+        data_2d_cp.append([', '.join(group)] + [''] * (2 * n_months))
+
+    # Build row_formulas for each data row: cumulative sums divided by target columns in Sales Target
+    row_formulas_cp = {}
+    for r_idx, group in enumerate(groups_filtered):
+        # Row index in sheet4 (1-based header row at 1): data rows start at row 2
+        row_spreadsheet = r_idx + 2
+
+        # Corresponding row in Sales Target is the same row index (Sales Target table also starts at row 1 with header)
+        sales_row = row_spreadsheet
+
+        # USD cumulative formulas
+        for mi in range(n_months):
+            # cumulative columns in Sales Target: usd_start .. (usd_start + mi)
+            left_col_letter = get_column_letter(usd_start)
+            right_col_letter = get_column_letter(usd_start + mi)
+            target_col_letter = get_column_letter(usd_target_col)
+            # Build Excel SUM range for the Sales Target row
+            sum_range = f"'Sales Target'!{left_col_letter}{sales_row}:{right_col_letter}{sales_row}"
+            # Formula: =IFERROR(SUM(range)/'Sales Target'!TargetCell,0)
+            formula = f"=IFERROR(SUM({sum_range})/'Sales Target'!{target_col_letter}{sales_row},0)"
+            # Place this formula in sheet4 at relative column (2 + mi)
+            row_formulas_cp.setdefault(r_idx, {})[1 + mi + 1] = formula  # +1 because headers start at col1 (Area)
+
+        # Qty cumulative formulas (placed after USD columns)
+        for mi in range(n_months):
+            left_q_col = qty_start
+            right_q_col = qty_start + mi
+            left_q_letter = get_column_letter(left_q_col)
+            right_q_letter = get_column_letter(right_q_col)
+            qty_target_letter = get_column_letter(qty_target_col)
+            sum_range_q = f"'Sales Target'!{left_q_letter}{sales_row}:{right_q_letter}{sales_row}"
+            formula_q = f"=IFERROR(SUM({sum_range_q})/'Sales Target'!{qty_target_letter}{sales_row},0)"
+            # relative column index for qty = 1 (area) + n_months + (mi+1)
+            rel_col = 1 + n_months + (mi + 1)
+            row_formulas_cp.setdefault(r_idx, {})[rel_col] = formula_q
+
+    # Column formats: USD and Qty cumulative as percentage with 0 decimals
+    col_formats_cp = {}
+    # Area as text
+    col_formats_cp[1] = '@'
+    # USD cumulative columns (relative columns 2..1+n_months)
+    for rel in range(2, 2 + n_months):
+        col_formats_cp[rel] = '0%'
+    # Qty cumulative columns
+    for rel in range(2 + n_months, 2 + 2 * n_months):
+        col_formats_cp[rel] = '0%'
+
+    # Create the table
+    generate_table(sheet4, headers_cp, data_2d_cp, 'Cumulative_Percentage', col_formats_cp, row_formulas_cp)
+
+    # Very hide sheet4
+    sheet4.sheet_state = 'veryHidden'
+
+    sheet3 = wb['Sales Target']
+    sheet4 = wb['Cumulative Percentage']  # Reverted to original name with space
+
+    num_data_rows = len([g for g in groups_filtered if g])
+    chart_row = 1 + num_data_rows + 2  # header + data + one blank
+
+    if n_months > 0 and num_data_rows > 0:
+        for r in range(1, min(6, sheet4.max_row + 1)):
+            row_vals = [sheet4.cell(row=r, column=c).value for c in range(1, min(sheet4.max_column + 1, 10))]
+
+        try:
+            # --- USD Chart ---
+            usd_chart = ScatterChart()
+            usd_chart.layout = Layout(
+                manualLayout=ManualLayout(
+                    x=0,
+                    y=0,
+                    h=0.8,
+                    w=0.5
+                )
+            )
+            usd_chart.auto_title_deleted = False
+            usd_chart.scatterStyle = 'lineMarker'
+            usd_chart.title = "Sales (USD)"
+            usd_chart.x_axis.majorGridlines = None
+            usd_chart.y_axis.majorGridlines = None
+            usd_chart.x_axis.title = 'Month'
+            usd_chart.y_axis.title = 'Cumulative %'
+            usd_chart.x_axis.delete = False
+            usd_chart.y_axis.delete = False
+
+            # Categories: Month labels from headers (row 1, columns 2 to 1+n_months)
+            usd_cat = Reference(sheet4, min_col=2, min_row=1, max_col=1 + n_months, max_row=1)
+
+            usd_series_count = 0
+            for r_idx in range(num_data_rows):
+                data_row = 2 + r_idx
+                title_cell = sheet4.cell(row=data_row, column=1)
+                title_val = title_cell.value
+                if not title_val:
+                    continue
+
+                # Data range: same row, columns 2 to 1+n_months
+                yref = Reference(
+                    sheet4,
+                    min_col=2,
+                    min_row=data_row,
+                    max_col=1 + n_months,
+                    max_row=data_row
+                )
+
+                # Only add series if title exists
+                if title_val:
+                    series = Series(yref, xvalues=usd_cat, title=title_val)
+                    series.marker.symbol = 'circle'
+                    series.marker.size = 3
+                    series.graphicalProperties.line.width = 12500
+                    usd_chart.series.append(series)
+                    usd_series_count += 1
+
+            usd_chart.width = 20
+            usd_chart.height = 10
+            anchor = f"A{chart_row}"
+            sheet3.add_chart(usd_chart, anchor)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+        try:
+            # --- Qty Chart ---
+            qty_chart = ScatterChart()
+            qty_chart.layout = Layout(
+                manualLayout=ManualLayout(
+                    x=0,
+                    y=0,
+                    h=0.8,
+                    w=0.5
+                )
+            )
+            qty_chart.auto_title_deleted = False
+            qty_chart.scatterStyle = 'lineMarker'
+            qty_chart.title = "Sales (Qty)"
+            qty_chart.x_axis.majorGridlines = None
+            qty_chart.y_axis.majorGridlines = None
+            qty_chart.x_axis.title = 'Month'
+            qty_chart.y_axis.title = 'Cumulative %'
+            qty_chart.x_axis.delete = False
+            qty_chart.y_axis.delete = False
+
+            qty_cat = Reference(sheet4, min_col=2 + n_months, min_row=1, max_col=1 + 2 * n_months, max_row=1)
+
+            qty_series_count = 0
+            for r_idx in range(num_data_rows):
+                data_row = 2 + r_idx
+                title_val_q = sheet4.cell(row=data_row, column=1).value
+                if not title_val_q:
+                    continue
+
+                yref_q = Reference(
+                    sheet4,
+                    min_col=2 + n_months,
+                    min_row=data_row,
+                    max_col=1 + 2 * n_months,
+                    max_row=data_row
+                )
+
+                if title_val_q:
+                    series_q = Series(yref_q, xvalues=qty_cat, title=title_val_q)
+                    series_q.marker.symbol = 'circle'
+                    series_q.marker.size = 3
+                    series_q.graphicalProperties.line.width = 12500
+                    qty_chart.series.append(series_q)
+                    qty_series_count += 1
+
+            qty_chart.width = 20
+            qty_chart.height = 10
+            anchor_qty = f"L{chart_row}"
+            sheet3.add_chart(qty_chart, anchor_qty)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
     # Save
     output = io.BytesIO()

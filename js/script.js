@@ -205,7 +205,7 @@ async function completeProcessingAnimation(overlay, modal, textEl, result) {
     const dd = String(today.getDate()).padStart(2, "0");
     const mm = String(today.getMonth() + 1).padStart(2, "0");
     const yyyy = today.getFullYear();
-    a.download = `Sales Report ${dd}-${mm}-${yyyy}.xlsx`;
+    a.download = `Sales Target ${dd}-${mm}-${yyyy}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -221,7 +221,6 @@ async function handleYearWarningIfNeeded(prepareResult) {
   return await new Promise((resolve) => {
     const overlay = document.getElementById("yearWarnOverlay");
     const modal = document.getElementById("yearWarnModal");
-    yearsText.textContent = prepareResult.years.join(", ");
     overlay.style.display = "block";
     modal.style.display = "flex";
     const yesBtn = document.getElementById("yearWarnYes");
