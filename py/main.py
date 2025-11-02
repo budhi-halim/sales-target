@@ -2,16 +2,12 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import io
-import copy
 from datetime import datetime
 from pyscript import ffi, window, document
 import re
-from collections import defaultdict
-from openpyxl.chart import ScatterChart, LineChart, Reference, Series
-from openpyxl.chart.marker import Marker
+from openpyxl.chart import ScatterChart, Reference, Series
 from openpyxl.chart.layout import Layout, ManualLayout
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font
 
 # Section: Configuration Class
 # Holds all configurable settings for columns, formats, and processing rules
@@ -54,7 +50,12 @@ class ColumnConfig:
             'HVP',
             'WCI',
             'BBQ',
-            'KAN'
+            'KAN',
+            'MTO',
+            'CAI',
+            'CAP',
+            'SWS',
+            'BLD'
         }
         self.area_replacements = {  # Area abbreviations to full names
             'Bdg': 'Bandung',
