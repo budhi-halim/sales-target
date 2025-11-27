@@ -300,16 +300,22 @@ function makeAreaCard(name) {
   card.draggable = true;
   card.textContent = name;
   card.dataset.name = name;
+
   card.addEventListener("dragstart", (e) => {
+    // 1. Stop the event from bubbling to the Group Container
+    e.stopPropagation(); 
+
     e.dataTransfer.setData("text/plain", name);
     e.dataTransfer.effectAllowed = "move";
     card.classList.add("dragging");
     DRAGGED_CARD = card;
   });
+
   card.addEventListener("dragend", () => {
     card.classList.remove("dragging");
     DRAGGED_CARD = null;
   });
+
   return card;
 }
 
