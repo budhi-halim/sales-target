@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "include": [
+    "index.html",
+    "css",
+    "js",
+    "assets",
+    "py/main.py",
+    "config.json"
+  ]
+}
